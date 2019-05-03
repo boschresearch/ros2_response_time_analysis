@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# Copyright (c) 2019 Robert Bosch GmbH
+# All rights reserved.
+#
+# This source code is licensed under the BSD-3-Clause license found in the
+# LICENSE file in the root directory of this source tree.
+
+import rclpy
+import rclpy.node
+import time,logging,contextlib
+
+from std_msgs.msg import String,Int32
+from model_validation.srv import Duration
+import model_validation.srv as srv
+
+topics = { 'high': Int32,
+           'medium': Int32,
+           'low': Int32 }
+services = { 'srv_high': srv.Int32,
+             'srv_medium': srv.Int32,
+             'srv_low': srv.Int32 }
+
+# Timer offsets and execution times are scaled by this factor. This adds some
+# slack for high-latency systems (e.g., virtual machines)
+time_scale_factor = 1
+
+# Initialize rclpy, ignoring the error if it has been initialized already
+try:
+    rclpy.init()
+except RuntimeError as e:
+    if not str(e).startswith('Failed to init: rcl_init called on an already initialized context'):
+        raise e
+
+def spin_nonblocking(node, max_block=1):
+    """spins the node until spinning would block >= max_block seconds"""
+    # replace 0 by a small number
+    if max_block == 0:
+        max_block = 0.1
+    while True:
+        start = time.perf_counter()
+        rclpy.spin_once(node, timeout_sec=max_block)
+        if time.perf_counter() - start >= max_block:
+            break
+
+@contextlib.contextmanager
+def temporary_subscription(node, typ, name, func):
+    sub = node.create_subscription(typ, name, func)
+    try:
+        yield sub
+    finally:
+        node.destroy_subscription(sub)
+class SendCBSequenceNode(rclpy.node.Node):
+    def __init__(self,name='send_cb_sequence_node', prefix='/arbitrary_cb_time_node/'):
+        super().__init__(name)
+        self.prefix = prefix
+        self.pubs = { cb: self.create_publisher(typ, prefix+cb) for cb,typ in topics.items() }
+        self.cls = { srv: self.create_client(typ, prefix+srv) for srv,typ in services.items() }
+        self.timerCtrl = self.create_publisher(Duration, prefix+"timer")
+
+    def trigger_callbacks(self, callbacks=[], timers=[], exe_time_ms=500):
+        """callbacks is a list of callback (base-)names. Triggers the callbacks in that order, using the given CB execution time.
+           timers is a list of offsets (milliseconds after beginning of the test). The timers will trigger at that point."""
+        execution_order = []
+        def appendToExecutionOrder(msg):
+            logging.info('Processed '+msg.data)
+            execution_order.append(msg.data)
+
+        exe_time_ms *= time_scale_factor
+        with temporary_subscription(self,String, self.prefix+'execution_order', appendToExecutionOrder):
+            # First, set up the timers for later. Then, send a high-priority callback ahead, to ensure the executor
+            # is busy while we send our callbacks. Otherwise, it is nondeterministic how many callbacks are polled on the initial poll
+
+            logging.info('Setting up {} timers'.format(len(timers)))
+            setup_time=300
+            # Magic number that is supposed to cover the time needed by the python process.
+            python_processing_time=100
+            for offset in timers:
+                offset *= time_scale_factor
+                self.timerCtrl.publish(Duration(offset=setup_time+offset, duration=exe_time_ms))
+
+            logging.info('Processing timers')
+            spin_nonblocking(self,python_processing_time/1000)
+
+            logging.info('Sending callbacks')
+            self.pubs['high'].publish(Int32(data=setup_time))
+            spin_nonblocking(self,0)
+            for cb in callbacks:
+                if cb in services.keys():
+                    self.cls[cb].call_async(srv.Int32.Request(time=exe_time_ms))
+                elif cb == 'delay':
+                    logging.info('delaying...')
+                    start = time.perf_counter()
+                    while (time.perf_counter() - start) < (exe_time_ms/1000):
+                        rclpy.spin_once(self)
+                        logging.info('delaying complete')
+                else:
+                    self.pubs[cb].publish(Int32(data=exe_time_ms))
+
+            logging.info('Processing sent callbacks')
+            spin_nonblocking(self, 1*time_scale_factor)
+
+        assert execution_order[0] == 'high', 'Initial setup signal was not the first to be processed. Maybe processing is broken?'
+        return execution_order[1:]
+
+if __name__ == '__main__':
+    cbs=(2*'low medium high srv_high srv_low ')+(3*'delay ')+'srv_medium srv_medium high'
+    timers=[200,200,2300,2300]
+    print('Running predefined example')
+    print('\tCallback order: {}\n\tTimer offsets: {}'.format(cbs, timers))
+    testNode = SendCBSequenceNode()
+    print(testNode.trigger_callbacks(cbs.split(' '),timers))
