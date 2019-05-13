@@ -444,8 +444,8 @@ def configure_mpl_for_tex():
 
 def generate_charts_for_paper(dir='.'):
     """Generate the charts for the ECRTS paper."""
+    plt.close()
     configure_mpl_for_tex()
-    plt.cla()
     plot_e2e_per_alpha()
     plt.savefig(dir + '/latency_per_budget.pdf', bbox_inches='tight')
 
