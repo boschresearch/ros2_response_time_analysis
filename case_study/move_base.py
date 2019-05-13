@@ -454,6 +454,12 @@ def generate_charts_for_paper(dir='.'):
     plot_e2e_per_jitter()
     plt.savefig(dir + '/latency_per_jitter.pdf', bbox_inches='tight')
 
+def generate_chart_for_talk(dir='.'):
+    """Generate the chart for the ECRTS presentation"""
+    plt.close()
+    mpl.rc('figure', figsize=(10.9,4.32))
+    plot_e2e_per_jitter(add_disabled_chain=False)
+    plt.savefig(dir + '/e2e_per_jitter.png', dpi=600, bbox_inches='tight', transparent=True)
 if __name__ == "__main__":
     for num_res in [1, 2]:
         for mname, m in models.items():
