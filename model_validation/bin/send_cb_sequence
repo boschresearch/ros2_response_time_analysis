@@ -57,7 +57,7 @@ class SendCBSequenceNode(rclpy.node.Node):
         self.cls = { srv: self.create_client(typ, prefix+srv) for srv,typ in services.items() }
         self.timerCtrl = self.create_client(Duration, prefix+"timer")
 
-    def trigger_callbacks(self, callbacks=[], timers=[], exe_time_ms=500):
+    def trigger_callbacks(self, callbacks, timers, exe_time_ms):
         """callbacks is a list of callback (base-)names. Triggers the callbacks in that order, using the given CB execution time.
            timers is a list of offsets (milliseconds after beginning of the test). The timers will trigger at that point."""
         execution_order = []
@@ -65,20 +65,19 @@ class SendCBSequenceNode(rclpy.node.Node):
             logging.info('Processed '+msg.data)
             execution_order.append(msg.data)
 
-        exe_time_ms *= time_scale_factor
         with temporary_subscription(self,String, self.prefix+'execution_order', appendToExecutionOrder):
             # First, set up the timers for later. Then, send a high-priority callback ahead, to ensure the executor
             # is busy while we send our callbacks. Otherwise, it is nondeterministic how many callbacks are polled on the initial poll
 
-            logging.info('Waiting for timer service to become available')
+            print('Waiting for timer service to become available')
             self.timerCtrl.wait_for_service()
 
+            print('Timer service found, starting experiment')
             logging.info('Setting up {} timers'.format(len(timers)))
             setup_time=300
             # Magic number that is supposed to cover the time needed by the python process.
             python_processing_time=100
             for offset in timers:
-                offset *= time_scale_factor
                 self.timerCtrl.call_async(Duration.Request(offset=setup_time+offset, duration=exe_time_ms))
 
             logging.info('Processing timers')
@@ -106,9 +105,11 @@ class SendCBSequenceNode(rclpy.node.Node):
         return execution_order[1:]
 
 if __name__ == '__main__':
+    cb_exe_time = 500*time_scale_factor
     cbs=(2*'low medium high srv_high srv_low ')+(3*'delay ')+'srv_medium srv_medium high'
-    timers=[200,200,2300,2300]
-    print('Running predefined example')
-    print('\tCallback order: {}\n\tTimer offsets: {}'.format(cbs, timers))
+    timers=[o*time_scale_factor for o in [200,200,2300,2300]]
+    print('Callback sending order ({}ms each): {}\nTimer offsets: {}'.format(cb_exe_time, cbs, timers))
     testNode = SendCBSequenceNode()
-    print(testNode.trigger_callbacks(cbs.split(' '),timers))
+    execution_order = testNode.trigger_callbacks(cbs.split(' '), timers, exe_time_ms=cb_exe_time)
+    print('Callback execution order: ', ' '.join(['timer'+x if x.isdigit() else x
+                                                   for x in execution_order]))
