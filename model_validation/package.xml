@@ -23,7 +23,7 @@
   <exec_depend>rmw</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
-
+  <member_of_group>rosidl_interface_packages</member_of_group>
   <export>
     <build_type>ament_cmake</build_type>
   </export>

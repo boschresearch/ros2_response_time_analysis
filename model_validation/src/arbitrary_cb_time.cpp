@@ -25,8 +25,8 @@ public:
     using namespace std::placeholders;
     RCLCPP_DEBUG(get_logger(), "ArbitraryCBTimeNode starting up");
 
-    timerCtrl = this->create_subscription<msg::Duration>(std::string("~/timer"),
-							 std::bind(&ArbitraryCBTimeNode::timerCreator,this,_1));
+    timerCtrl = this->create_service<srv::Duration>(std::string("~/timer"),
+                                                    std::bind(&ArbitraryCBTimeNode::timerCreator,this,_1,_2,_3));
     const std::string names[] = { "high", "medium", "low" };
     for (const auto& name : names) {
       subs.push_back(this->create_subscription<std_msgs::msg::Int32>(std::string("~/")+name,
@@ -43,7 +43,11 @@ public:
     execution_order_publisher = this->create_publisher<std_msgs::msg::String>("~/execution_order");
   }
   
-  void timerCreator(const typename msg::Duration::SharedPtr msg) {
+  void timerCreator(const std::shared_ptr<rmw_request_id_t> request_header,
+                    const std::shared_ptr<srv::Duration::Request> msg,
+                    const std::shared_ptr<srv::Duration::Response> rsp) {
+    (void)request_header;
+    (void)rsp;
     milliseconds duration (msg->duration);
     uint32_t id = this->nextTimerId++;
 
@@ -66,7 +70,7 @@ private:
   /* on service request, block for N milliseconds */
   std::vector<rclcpp::Service<srv::Int32>::SharedPtr> servs;
   /* Trigger a timer in N milliseconds, running for M milliseconds */
-  rclcpp::Subscription<msg::Duration>::SharedPtr timerCtrl;
+  rclcpp::Service<srv::Duration>::SharedPtr timerCtrl;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr execution_order_publisher;
   uint32_t nextTimerId;
 

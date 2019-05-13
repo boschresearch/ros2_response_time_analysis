@@ -55,7 +55,7 @@ class SendCBSequenceNode(rclpy.node.Node):
         self.prefix = prefix
         self.pubs = { cb: self.create_publisher(typ, prefix+cb) for cb,typ in topics.items() }
         self.cls = { srv: self.create_client(typ, prefix+srv) for srv,typ in services.items() }
-        self.timerCtrl = self.create_publisher(Duration, prefix+"timer")
+        self.timerCtrl = self.create_client(Duration, prefix+"timer")
 
     def trigger_callbacks(self, callbacks=[], timers=[], exe_time_ms=500):
         """callbacks is a list of callback (base-)names. Triggers the callbacks in that order, using the given CB execution time.
@@ -70,13 +70,16 @@ class SendCBSequenceNode(rclpy.node.Node):
             # First, set up the timers for later. Then, send a high-priority callback ahead, to ensure the executor
             # is busy while we send our callbacks. Otherwise, it is nondeterministic how many callbacks are polled on the initial poll
 
+            logging.info('Waiting for timer service to become available')
+            self.timerCtrl.wait_for_service()
+
             logging.info('Setting up {} timers'.format(len(timers)))
             setup_time=300
             # Magic number that is supposed to cover the time needed by the python process.
             python_processing_time=100
             for offset in timers:
                 offset *= time_scale_factor
-                self.timerCtrl.publish(Duration(offset=setup_time+offset, duration=exe_time_ms))
+                self.timerCtrl.call_async(Duration.Request(offset=setup_time+offset, duration=exe_time_ms))
 
             logging.info('Processing timers')
             spin_nonblocking(self,python_processing_time/1000)
