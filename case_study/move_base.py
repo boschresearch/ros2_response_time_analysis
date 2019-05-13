@@ -395,7 +395,7 @@ def jittered_lats(movebase, js, disable_chain=False):
             for J in js]
 
 
-def plot_e2e_per_jitter():
+def plot_e2e_per_jitter(add_disabled_chain=True):
     """Plots jitter values vs. jittered_lats."""
     js = range(0, mseconds(80), mseconds(5))
 
@@ -406,9 +406,10 @@ def plot_e2e_per_jitter():
                  convertTimes(jittered_lats(m, js), mseconds(1)),
                  model_graphspec[mname], label=mname)
 
-    plt.plot(convertTimes(js, mseconds(1)),
-             convertTimes(jittered_lats(EventDrivenMoveBase, js, disable_chain=True), mseconds(1)),
-             model_graphspec[mname], linestyle=':', label='event-driven (no chains)')
+    if add_disabled_chain:
+        plt.plot(convertTimes(js, mseconds(1)),
+                 convertTimes(jittered_lats(EventDrivenMoveBase, js, disable_chain=True), mseconds(1)),
+                 model_graphspec[mname], linestyle=':', label='event-driven (no chains)')
     plt.legend()
 
 def configure_mpl_for_tex():
