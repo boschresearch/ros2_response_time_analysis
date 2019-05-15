@@ -1,7 +1,7 @@
 # About
 
 This is the companion code for the ECRTS 2019 paper *Response-Time Analysis of ROS 2 Processing
-Chains under Reservation-Based Scheduling*. The source code comprises two components
+Chains under Reservation-Based Scheduling* (a [preprint](https://t-blass.de/papers/response-time-analysis-of-ros2.pdf) is available). The source code comprises two components
 
 1. A [model validation test](model_validation) that validates our model of the ROS 2 callback scheduling by sending messages to a node and reporting their execution ordering.
 2. [case_study](case_study), a prototypical implementation of the proposed response-time analysis, together with a model of the `move_base` stack that is used in the paper's case study.

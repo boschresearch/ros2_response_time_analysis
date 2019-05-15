@@ -1,6 +1,6 @@
 # Overview
 
-This package contains an evaluation setup for the ROS executor behaviour.
+This package contains an model validation setup for the ROS executor behaviour. It corresponds to _Section 3_ of [the paper](https://t-blass.de/papers/response-time-analysis-of-ros2.pdf).
 
 It consists of two components:
 - A C++ validation node in src/arbitrary_cb_time.cpp, that provides callbacks that block for a user-defined amount of time.

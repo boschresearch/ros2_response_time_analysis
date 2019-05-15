@@ -1,6 +1,7 @@
 # Overview
 
-This repository contains the source code for the case study of the ECRTS 2019 paper "Response-Time Analysis of ROS 2 Processing Chains under Reservation-Based Scheduling".
+This directory contains the source code for the move-base case study. It corresponds to _Section 6_ of [the paper](https://t-blass.de/papers/response-time-analysis-of-ros2.pdf).
+
 The code is based on the [pyCPA](https://bitbucket.org/pycpa/pycpa) for compositional performance analysis. It consists of two parts: `ros.py`, which extends pyCPA with the analysis described in the paper, and `move_base.py`, which creates the system model, runs the analysis and visualizes the results.
 
 # Instructions
