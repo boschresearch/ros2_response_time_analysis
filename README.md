@@ -10,13 +10,15 @@ Please cite the above paper when reporting, reproducing or extending the results
 
 ## Purpose of the project
 
-This software is a research prototype, solely developed for and published as
+This project contains the source code for the experiments in the above paper. It can be used to reproduce our results.
+
+Please note that this software is a research prototype, solely developed for and published as
 part of the publication cited above. It will neither be
 maintained nor monitored in any way.
 
 ## Requirements, how to build, test, install, use, etc.
 
-This repository consists of independent components. Please refer to the README files in the respective subdirectories for instructions.
+This repository consists of two independent components. Please refer to the README files in the respective subdirectories for instructions.
 
 ## License
 
