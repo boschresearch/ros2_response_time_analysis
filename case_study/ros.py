@@ -429,12 +429,20 @@ def max_busy_period(task):
 #
 # All these tasks return their results and also put their results into the task_results dictionary
 #  compute_wcrt additionally has to set b_wcrt and q_wcrt and also busy_times
-# If one ses the JitterBminPropagationEventModel, one also needs:
+# If one sets the JitterBminPropagationEventModel, one also needs:
 #  b_min(self, task, q)
+#
+# Further, the scheduler must provide a function get_dependent_tasks(self, task),
+# which returns additional dependent tasks besides the direct successors that need
+# to be recomputed on a change (https://bitbucket.org/pycpa/pycpa/commits/1b90b92d8186545fd4869ed097d9de0aa367f7ab)
+
 
 class DefaultScheduler:
     def __init__(self):
         pass
+
+    def get_dependent_tasks(self, task):
+        return set()
 
     def compute_max_backlog(self, task, task_results, output_delay=0):
         return 0
