@@ -448,18 +448,25 @@ def generate_charts_for_paper(dir='.'):
     plt.close()
     configure_mpl_for_tex()
     plot_e2e_per_alpha()
-    plt.savefig(dir + '/latency_per_budget.pdf', bbox_inches='tight')
+    lat_per_budget_path = dir + '/latency_per_budget.pdf'
+    plt.savefig(lat_per_budget_path, bbox_inches='tight')
 
     plt.cla()
     plot_e2e_per_jitter()
-    plt.savefig(dir + '/latency_per_jitter.pdf', bbox_inches='tight')
+    lat_per_jitter_path = dir + '/latency_per_jitter.pdf'
+    plt.savefig(lat_per_jitter_path, bbox_inches='tight')
+
+    print('Generated charts from the ECRTS paper in', lat_per_budget_path, 'and', lat_per_jitter_path)
 
 def generate_chart_for_talk(dir='.'):
     """Generate the chart for the ECRTS presentation"""
     plt.close()
     mpl.rc('figure', figsize=(10.9,4.32))
     plot_e2e_per_jitter(add_disabled_chain=False)
-    plt.savefig(dir + '/e2e_per_jitter.png', dpi=600, bbox_inches='tight', transparent=True)
+    chart_path = dir + '/e2e_per_jitter.png' 
+    plt.savefig(chart_path, dpi=600, bbox_inches='tight', transparent=True)
+
+    print('Generated charts from the ECRTS presentation in', lat_per_budget_path, 'and', lat_per_jitter_path)
 if __name__ == "__main__":
     for num_res in [1, 2]:
         for mname, m in models.items():
