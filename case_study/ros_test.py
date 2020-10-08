@@ -14,7 +14,7 @@ class TestArrivalCurveSteps(unittest.TestCase):
               model.PJdEventModel(P=100, J=400, dmin=2),
               model.PJdEventModel(P=20, J=30, dmin=20),
               model.CTEventModel(c=5, T=10),
-              model.CTEventModel(c=5,T=5,dmin=3)]
+              model.CTEventModel(c=5,T=15,dmin=3)]
 
     def bruteforce_model_test(self, m):
         "Check that the bruteforce arrive_curve_steps predicts the first 100 steps of the arrival curve correctly"
