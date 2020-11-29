@@ -18,19 +18,19 @@ class TestArrivalCurveSteps(unittest.TestCase):
 
     def bruteforce_model_test(self, m):
         "Check that the bruteforce arrive_curve_steps predicts the first 100 steps of the arrival curve correctly"
-        steps = list(itertools.islice(ros.arrival_curve_steps(m, optimized=False), 100))
-        eta = [ m.eta_plus(i) for i in range(steps[-1]+1) ]
+        steps = list(itertools.islice(ros.arrival_curve_steps(m, bruteforce=True), 100))
+        eta = [ m.eta_plus(i) for i in range(steps[-1]+1)]
 
         self.assertIn(0, steps)
-        for i in range(1,len(eta)):
+        for i in range(0,len(eta)-1):
             if i in steps:
-                self.assertNotEqual(eta[i-1], eta[i])
+                self.assertNotEqual(eta[i], eta[i+1])
             else:
-                self.assertEqual(eta[i-1], eta[i])
+                self.assertEqual(eta[i], eta[i+1])
 
     def specialized_model_test(self, m):
         specialized = itertools.islice(ros.arrival_curve_steps(m),100)
-        forced = itertools.islice(ros.arrival_curve_steps(m,optimized=False), 100)
+        forced = itertools.islice(ros.arrival_curve_steps(m,bruteforce=True), 100)
         for s,f in zip(specialized,forced):
             self.assertEqual(s,f)
     

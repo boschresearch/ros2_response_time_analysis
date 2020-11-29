@@ -35,6 +35,9 @@ def Hz(n):
     return int(seconds(1 / n))
 
 
+from pycpa.options import set_opt
+
+set_opt('max_wcrt', seconds(1))
 # Minimum worst-case jitter for input sensors.
 # This models interrupt latency+ROS overhead, underestimated
 min_jitter = useconds(200)
@@ -46,12 +49,12 @@ class PBurstModel (model.PJdEventModel):
         super().__init__(P, J, dmin, name=name, **kwargs)
 
 
-wcets = {'local_costmap': mseconds(5),
+wcets = {'local_costmap': mseconds(2),
          'global_costmap': mseconds(10),
          'local_planner': mseconds(18),
          'global_planner': mseconds(200),
          'goal_setter': min_jitter,
-         'pose_estimator': mseconds(6),
+         'pose_estimator': useconds(200),
          'sensor2mem': min_jitter}
 input_topics = [('/scan', model.PJdEventModel(P=Hz(12.5), J=min_jitter)),
                 ('/tF', model.PJdEventModel(P=Hz(12.5), J=min_jitter)),
@@ -163,15 +166,14 @@ class EventDrivenMoveBase(MoveBase):
     def __init__(self, num_reservations, **kwargs):
         super().__init__(num_reservations,
                          name='move_base.driver-event.{}'.format(num_reservations), **kwargs)
-        # Since there is only one timer, the priorities don't matter. We just keep them different
         callbacks_ = [
-            Callback('sensor2mem', CBType.SUBSCRIBER, 0, wcet=wcets['sensor2mem']),
-            Callback('local_costmap', CBType.SUBSCRIBER, 4, wcet=wcets['local_costmap']),
-            Callback('global_costmap', CBType.SUBSCRIBER, 5, wcet=wcets['global_costmap']),
-            Callback('local_planner', CBType.SUBSCRIBER, 6, wcet=wcets['local_planner']),
-            Callback('global_planner_goalset', CBType.SUBSCRIBER, 7, wcet=wcets['global_planner']),
-            Callback('global_planner_timed', CBType.TIMER, 8, wcet=wcets['global_planner']),
-            Callback('pose_estimator', CBType.SUBSCRIBER, 10, wcet=wcets['pose_estimator'])]
+            Callback('sensor2mem', CBType.SUBSCRIBER, 1, wcet=wcets['sensor2mem']),
+            Callback('local_costmap', CBType.SUBSCRIBER, 3, wcet=wcets['local_costmap']),
+            Callback('global_costmap', CBType.SUBSCRIBER, 1, wcet=wcets['global_costmap']),
+            Callback('local_planner', CBType.SUBSCRIBER, 4, wcet=wcets['local_planner']),
+            Callback('global_planner_goalset', CBType.SUBSCRIBER, 3, wcet=wcets['global_planner']),
+            Callback('global_planner_timed', CBType.TIMER, 2, wcet=wcets['global_planner']),
+            Callback('pose_estimator', CBType.SUBSCRIBER, 2, wcet=wcets['pose_estimator'])]
 
         self.register_callbacks(callbacks_)
 
@@ -201,7 +203,8 @@ class EventDrivenMoveBase(MoveBase):
     def e2e_local_chain(self):
         try:
             task_results = analyze_system(self)
-        except NotSchedulableException:
+        except NotSchedulableException as e:
+            print(f"Not schedulable ({e})")
             return None
         return ros.e2e_latency(ros.find_path(self.callbacks['/odom'], self.callbacks['/cmd_vel']), task_results)
 
@@ -308,7 +311,7 @@ def make2res_alpha(alpha, model, P):
 
     model is a function that, given a reservation count, returns a model with that many reservations.
     The function then configures the budget such that reservation 0 receives alpha of the total budget,
-    and reservation 1 receives (1-alpha) of the budget.
+    and reservation 1 receives 75% of budget.
     P can be the reservation period length or None, which selects the minimum feasible period length."""
     s = model(2)
 
@@ -318,9 +321,10 @@ def make2res_alpha(alpha, model, P):
 
     alpha = Fraction(alpha).limit_denominator(P)
     assert isInteger(alpha * P)
-    s.reservations[0].period = s.reservations[1].period = P
+    s.reservations[0].period = P
     s.reservations[0].budget = int(alpha * P)
-    s.reservations[1].budget = P - s.reservations[0].budget
+    s.reservations[1].period = 4
+    s.reservations[1].budget = 3
 
     # Sanity check
     for r in s.reservations:
@@ -357,11 +361,10 @@ def plot_e2e_per_alpha(P=None, **kwargs):
 
     P is the reservation period, any other kwargs are passed to plt.plot"""
 
-    # Step through the x axis in steps of 2.5.
-    xs_pct = np.linspace(0, 100, num=41)
+    # Step through the x axis in steps of 5.
+    xs_pct = np.linspace(0, 100, num=21)
     plt.xlabel('Budget of the local reservation (percent)')
     plt.ylabel('End-to-end latency (ms)')
-    plt.ylim(top=500)
 
     for mname, m in models.items():
         if P is not None:
@@ -373,10 +376,11 @@ def plot_e2e_per_alpha(P=None, **kwargs):
                              for x in xs_pct]
         plt.plot(xs_pct, convertTimes(latencies, mseconds(1)),
                  model_graphspec[mname], label=mname, **kwargs)
-        if latencies != latencies_nochain:
+        if mname == 'event-driven':
             plt.plot(xs_pct, convertTimes(latencies_nochain, mseconds(1)),
                      model_graphspec[mname], linestyle=':', label=mname + ' (no chains)', **kwargs)
-    plt.legend()
+    plt.ylim(bottom=0)
+    plt.legend(loc='upper left')
 
 # We need to memoize this function in addition to e2e_per_alpha_local, since the memoization
 # doesn't seem to be able to handle ad-hoc computed models.
@@ -385,9 +389,7 @@ def jittered_lats(movebase, js, disable_chain=False):
     """Computes e2e_per_alpha_local at reservation alpha of 45% for each jitter in js."""
 
     def jittered_models(J):
-        return {'/scan': model.PJdEventModel(P=Hz(12.5), J=J),
-                '/tF': model.PJdEventModel(P=Hz(12.5), J=J),
-                '/odom': model.PJdEventModel(P=Hz(12.5), J=J)}
+        return {'/odom': model.PJdEventModel(P=Hz(12.5), J=J)}
 
     return [e2e_per_alpha_local(0.45,
                                 lambda n: movebase(n, override_model=jittered_models(J)),
@@ -395,9 +397,9 @@ def jittered_lats(movebase, js, disable_chain=False):
             for J in js]
 
 
-def plot_e2e_per_jitter(add_disabled_chain=True):
+def plot_e2e_per_jitter(add_disabled_chain=False):
     """Plots jitter values vs. jittered_lats."""
-    js = range(0, mseconds(80), mseconds(5))
+    js = range(0, mseconds(200), mseconds(15))
 
     plt.xlabel('Jitter on the input sensors (ms)')
     plt.ylabel('End-to-End latency (ms)')
@@ -410,6 +412,8 @@ def plot_e2e_per_jitter(add_disabled_chain=True):
         plt.plot(convertTimes(js, mseconds(1)),
                  convertTimes(jittered_lats(EventDrivenMoveBase, js, disable_chain=True), mseconds(1)),
                  model_graphspec[mname], linestyle=':', label='event-driven (no chains)')
+
+    plt.ylim(bottom=0)
     plt.legend()
 
 def configure_mpl_for_tex():
@@ -436,7 +440,7 @@ def configure_mpl_for_tex():
         "font.size": 6,
         "font.serif": ["computer modern roman"],
         "axes.labelsize": 6,
-        "legend.fontsize": 7,
+        "legend.fontsize": 6,
         "xtick.labelsize": 6,
         "ytick.labelsize": 6,
         "lines.markersize": 3.5
@@ -475,3 +479,4 @@ if __name__ == "__main__":
                          dotout='{}-{}.dot'.format(mname, num_res), show=False)
 
     generate_charts_for_paper()
+

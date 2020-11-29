@@ -9,10 +9,12 @@ import math
 import logging
 import functools
 import contextlib
+import itertools
 
 import pycpa.model as model
 import pycpa.analysis as analysis
 from pycpa.junctions import ORJoin
+from pycpa.options import get_opt,set_opt
 
 # Global flag: Should chains be analyzed as a whole or piecewise?
 disable_chain_analysis = False
@@ -49,50 +51,29 @@ class CBType(enum.IntEnum):
         return self.value >= self.__class__.SUBSCRIBER
 
 
-def arrival_curve_steps(event_model, optimized=True):
-    """Yields the steps of the arrival curve for the given event model.
-       If optimized is true, may use optimized implementations for specific models.
-       TODO: This should really be methods on the event models"""
+def arrival_curve_steps(event_model, bruteforce=False):
+    """Yields the steps of the arrival curve for the given event model. A is a step if f(A) != F(A+1).
+       If bruteforce is true, compute the steps by invoking eta_plus. This is mainly useful for testing purposes"""
 
-    def PJd(event_model):
-        "Computes the arrival curve steps for the PJd event model"
-        J = event_model.J
-        P = event_model.P
-        d = event_model.dmin
 
-        yield 0
-        # First look at the burst part, if present
-        if 0 < d < P:
-            inflection_point = (J * d) / (P - d)
-            for t in range(1, math.ceil(inflection_point)+1, d):
-                yield t
-            # compute in which period we currently are
-            period_nr = math.ceil((inflection_point + J) / P)
-            # compute the next period change
-            t = ((P * period_nr) - J) + epsilon
-        else:
-            t = 1
-
-        # Now continue with the asymptotic part
-        while True:
-            yield t
-            t += P
-
-    def bruteforce(event_model):
+    def by_dmin(event_model):
+        for i in itertools.count(1):
+            yield event_model.delta_min(i)
+    def by_bruteforce(event_model):
         "Computes the arrival curve steps by evaluating the arrival curve a lot"
-        i = 0
+        i = 1
         last = None
         while True:
             new = event_model.eta_plus(i)
             if last != new:
-                yield i
+                yield i-1
             i += 1
             last = new
 
-    if optimized:
-        if isinstance(event_model, model.PJdEventModel):
-            return PJd(event_model)
-    return bruteforce(event_model)
+    if bruteforce:
+        return by_bruteforce(event_model)
+    return by_dmin(event_model)
+
 
 
 class Callback(model.Task):
@@ -115,6 +96,7 @@ class Callback(model.Task):
 
     def request_bound(self, delta):
         "Returns the highest amount of workload required in an interval of length delta"
+        model = self.in_event_model
         return self.in_event_model.eta_plus(delta) * self.wcet
 
     def request_bound_steps(self):
@@ -297,15 +279,17 @@ class CBSReservation (model.Resource):
         return supply
 
     def supply_time(self, supply):
-        """Returns the first point in time at which supply has certainly been provided.
-           The inverse of supply_bound"""
-        if self.budget == 0:
+        slack = self.period - self.budget
+        if supply == 0:
             return 0
-        # First identfy the period in which this much supply is going to be provided
-        period_start = self.max_delay + \
-            (math.floor(supply / self.budget) * self.period)
-        return period_start + (supply - self.supply_bound(period_start))
+        if self.budget == 0:
+            return math.inf
 
+        full_periods = supply // self.budget
+        full_budget = full_periods * self.budget
+        fractional_budget = (slack + supply - full_budget) if full_budget < supply else 0
+
+        return slack + self.period * full_periods + fractional_budget
 
 def partition(iterable, pivot, key):
     """Returns 3 lists: the lists of smaller, equal and larger elements, compared to pivot.
@@ -335,6 +319,7 @@ def fixed_point(f, x0):
         if xnew == x:
             return x
         logging.debug('FPI update: %s (state %s)', xnew, state)
+        assert xnew > x
         x = xnew
 
 # TODO the name is quite ad-hoc. There has to be some common concept behind all the equally-looking
@@ -347,10 +332,11 @@ def balance_rbf_sbf_updater(resource, compute_request):
     def updater(T):
         supplied = resource.supply_bound(T)
         requested = compute_request(T)
-        assert supplied <= requested
-        if supplied == requested:
+        if supplied >= requested:
             return T, None
-        return resource.supply_time(requested), (supplied, requested)
+        ret = resource.supply_time(requested), (supplied, requested)
+        assert resource.supply_bound(ret[0]) == requested and resource.supply_bound(ret[0]-1) < requested
+        return ret
 
     return updater
 
@@ -371,38 +357,52 @@ def latest_cb_response_at(task, A):
 
         def compute_request(T):
             return (task.request_bound(A + epsilon)
-                    + sum([t.request_bound(T - task.wcet) for t in hp_tasks])
+                    + sum([t.request_bound(T - task.wcet + epsilon) for t in hp_tasks])
                     + max([t.wcet for t in lp_tasks]))
     else:
         def compute_request(T):
             return (task.request_bound(A + epsilon)
-                    + sum([t.request_bound(T - task.wcet) for t in resource.tasks
+                    + sum([t.request_bound(T - task.wcet + epsilon) for t in resource.tasks
                            if t != task]))
-    return fixed_point(balance_rbf_sbf_updater(resource, compute_request), A + task.wcet)
+    fp = fixed_point(balance_rbf_sbf_updater(resource, compute_request), A)
+    return fp
 
 def latest_chain_response_at(chain, A):
     """Computes the latest point in time at which chain (a sequence of tasks) can complete, assuming the first task in
        the chain is released at A.
        Assumes the entire chain is in the same resource"""
 
-    # The analysis below only works for chains of length > 1
-    if len(chain) == 1:
+    global disable_chain_analysis
+    if disable_chain_analysis:
+        assert len(chain) == 1
         return latest_cb_response_at(chain[0], A)
 
     assert all([on_same_resource(t, chain[0]) for t in chain])
     resource = chain[0].resource
 
-    # We only need analyze the *last* element of the chain. Cf 6.2 of the paper
-    tail = chain[-1]
+    sink = chain[-1]
+    src = chain[0]
+    chain_arr = src.in_event_model
+    chain_cbs = [chain[i] for i in range(0, len(chain))]
 
     def compute_request(T):
-        return sum([gamma.request_bound(T - tail.wcet) for gamma in resource.chains()])
+        slf = chain_arr.eta_plus(A + epsilon) * sink.wcet
+        chn = chain_arr.eta_plus(T - sink.wcet + epsilon) * sum(cb.wcet for cb in chain_cbs[:-1])
+        oth = sum(longest_unique_subchain(cb, cross_resources=False)[0].in_event_model.eta_plus(T - sink.wcet + epsilon) * cb.wcet
+                  for cb in sink.resource.tasks
+                  if cb not in chain_cbs)
+        ret = slf + chn + oth
+        assert T >= A
+        return ret
+        
 
-    return fixed_point(balance_rbf_sbf_updater(resource, compute_request), A + chain.wcet)
+    assert chain_arr.eta_plus(A) != chain_arr.eta_plus(A+1)
+    fp = fixed_point(balance_rbf_sbf_updater(resource, compute_request), A + chain.wcet)
+    return fp
 
 
-def max_busy_period(task):
-    "?? I don't have any intuitive notion of what this does"
+def max_busy_period_cb(task):
+    "Computes the largest possible busy period for the given task's executor"
     resource = task.resource
 
     if task.typ == CBType.EVENT_SOURCE:
@@ -417,9 +417,22 @@ def max_busy_period(task):
                     + task.request_bound(T))
     else:
         def compute_request(T):
-            return sum([t.request_bound(T) for t in resource.tasks])
+            ret = sum([t.request_bound(T) for t in resource.tasks])
+            return ret
 
     return fixed_point(balance_rbf_sbf_updater(resource, compute_request), task.wcet)
+
+def max_busy_period(chain):
+    global disable_chain_analysis
+    if disable_chain_analysis:
+        assert len(chain) == 1
+        return max_busy_period_cb(chain[0])
+    assert all([on_same_resource(t, chain[0]) for t in chain])
+    def compute_request(T):
+        ret = sum(chain.request_bound(T)
+                  for chain in chain[0].resource.chains())
+        return ret
+    return fixed_point(balance_rbf_sbf_updater(chain[0].resource, compute_request), chain.wcet)
 
 # We do not inherit from analysis.Scheduler, since we use a different scheduling analysis approach
 # The scheduler must fulfil the following interface:
@@ -439,6 +452,7 @@ def max_busy_period(task):
 
 class DefaultScheduler:
     def __init__(self):
+        set_opt('propagation', 'jitter')
         pass
 
     def get_dependent_tasks(self, task):
@@ -455,19 +469,26 @@ class DefaultScheduler:
     def compute_wcrt(self, task, task_results=None):
         global disable_chain_analysis
         if disable_chain_analysis:
-            chain = [task]
+            chain = Chain(task, task)
         else:
             chain = longest_unique_subchain(task, cross_resources=False)
 
         wcrt = 0
-        max_A = max_busy_period(task)
-        for A in task.request_bound_steps():
+        max_A = max_busy_period(chain)
+        print(f"max busy period for {list(chain)} {len(chain)}")
+        if max_A > get_opt('max_wcrt'):
+            raise analysis.NotSchedulableException(f"busy window {task} {max_A} > max wcrt {get_opt('max_wcrt')}")
+        for A in chain.request_bound_steps():
             if A >= max_A:
                 break
-            wcrt = max(wcrt, latest_chain_response_at(chain, A) - A)
+            wcrt_at_a = latest_chain_response_at(chain, A) - A
+            wcrt = max(wcrt, wcrt_at_a)
+            if wcrt > get_opt('max_wcrt'):
+                raise analysis.NotSchedulableException(f"wcrt {task} {wcrt} > max wcrt {get_opt('max_wcrt')}")
         if task_results:
             task_results[task].wcrt = wcrt
             # These don't make sense in our analysis approach
             task_results[task].b_wcrt = task_results[task].q_wcrt = None
-            task_results[task].busy_times = [0, task.wcet]
+            task_results[task].busy_times = [0, max_A]
+
         return wcrt
